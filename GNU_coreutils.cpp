@@ -22,10 +22,17 @@ class GNU_coreutils_sort {
                         else if (op[j] == 'r') reverse = true;
                         else if (op[j] == 'u') unique = true;
                         else if (op[j] == 'o') {
-                            if (++i < argc) out_filename = argv[i];
+                            if (j + 1 < op.size()) {
+                                out_filename = op.substr(j + 1);
+                            }
                             else {
-                                std::cout << "The expected output file is missing!" << std::endl;
-                                exit(1);
+                                if (++i < argc) {
+                                    out_filename = argv[i];
+                                }
+                                else {
+                                    std::cout << "The expected output file is missing!" << std::endl;
+                                    exit(1);
+                                }
                             }
                             break;
                         }
@@ -53,15 +60,18 @@ class GNU_coreutils_sort {
             else if (str[i] == '+') return {0, false};
 
             std::string tmp;
-            while (i < size && (str[i] >= '0' && str[i] <= '9') || str[i] == ',') {
-                if (str[i] == ',') ++i;
+            while (i < size && (str[i] >= '0' && str[i] <= '9') || str[i] == ',' || str[i] == ' ') {
+                if (str[i] == ',' || str[i] == ' ') ++i;
                 else tmp += str[i++];
             }
 
             if (i < size && str[i] == '.') {
                 tmp += '.';
                 ++i;
-                while (i < size && str[i] >= '0' && str[i] <= '9') tmp += str[i++];
+                while (i < size && (str[i] >= '0' && str[i] <= '9') || str[i] == ',' || str[i] == ' ') {
+                    if (str[i] == ',' || str[i] == ' ') ++i;
+                    else tmp += str[i++];
+                }
             }
 
             try {
@@ -127,7 +137,7 @@ class GNU_coreutils_sort {
             if (reverse) {
                 std::reverse(data.begin(), data.end());
             }
-            if (!out_filename.empty()) {
+            if (!out_filename.empty() && out_filename != "-") {
                 std::ofstream file(out_filename);
                 if (!file.is_open()) {
                     std::cout << "Output file openning error!" << std::endl;
