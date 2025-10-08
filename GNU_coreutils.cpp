@@ -4,16 +4,25 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <optional>
+#include <queue>
+#include <filesystem>
+#include <memory>
 #include <fstream>
 
 class GNU_coreutils_sort {
-        bool numeric = false;
-        bool reverse = false;
-        bool unique = false;
+        bool numeric{false};
+        bool reverse{false};
+        bool unique{false};
         std::vector<std::string> in_filenames;
         std::string out_filename;
+        int chunk_count{0};
 
         void parse_arguments(int argc, const char *argv[]) {
+            if (argc < 2) {
+                std::cout << "Usage: " << argv[0] << " [-nru] [-o output_file] [input_files...]" << std::endl;
+                exit(1);
+            }
             for (int i{1}; i < argc; ++i) {
                 std::string op{argv[i]};
                 if (op.front() == '-') {
@@ -60,16 +69,16 @@ class GNU_coreutils_sort {
             else if (str[i] == '+') return {0, false};
 
             std::string tmp;
-            while (i < size && (str[i] >= '0' && str[i] <= '9') || str[i] == ',' || str[i] == ' ') {
-                if (str[i] == ',' || str[i] == ' ') ++i;
+            while (i < size && ((str[i] >= '0' && str[i] <= '9') || str[i] == ',')) {
+                if (str[i] == ',') ++i;
                 else tmp += str[i++];
             }
 
             if (i < size && str[i] == '.') {
                 tmp += '.';
                 ++i;
-                while (i < size && (str[i] >= '0' && str[i] <= '9') || str[i] == ',' || str[i] == ' ') {
-                    if (str[i] == ',' || str[i] == ' ') ++i;
+                while (i < size && ((str[i] >= '0' && str[i] <= '9') || str[i] == ',')) {
+                    if (str[i] == ',') ++i;
                     else tmp += str[i++];
                 }
             }
@@ -83,6 +92,105 @@ class GNU_coreutils_sort {
             }
         }
 
+        void solution(std::optional<std::vector<std::unique_ptr<std::ifstream>>>& input_files, std::ostream& output) { //// mi qani faylic kardalu logika
+            int chunk_size{1000};
+            std::vector<std::string> data;
+            data.reserve(chunk_size);
+            std::vector<std::fstream> files;
+            std::string line;
+
+            auto comparator = [this](const std::string& str1, const std::string& str2){
+                if (numeric) {
+                    auto [num1, flag1] = this->parse_number(str1);
+                    auto [num2, flag2] = this->parse_number(str2);
+                    if (!flag1 && !flag2) return reverse ? str2 < str1 : str1 < str2;
+                    if (flag1 != flag2) {
+                        if (flag1 && num1 == 0) return reverse ? false : true;
+                        else if (flag2 && num2 == 0) return reverse ? true : false;
+                        return reverse ? num2 < num1 : num1 < num2;
+                    }
+                    if (num1 != num2) return reverse ? num2 < num1 : num1 < num2;
+                    return reverse ? str2 < str1 : str1 < str2;
+                }
+                else return reverse ? str2 < str1 : str1 < str2;
+            };
+
+            auto sort_and_write_to_chunkfile = [&](){
+                std::sort(data.begin(), data.end(), comparator);
+                if (unique) {
+                    auto it = std::unique(data.begin(), data.end());
+                    data.erase(it, data.end());
+                }
+                std::string filename("chunk_file");
+                filename += std::to_string(chunk_count++) + ".txt";
+                std::fstream chunk_file(filename, std::ios::in | std::ios::out | std::ios::trunc);
+                if (!chunk_file.is_open()) {
+                    std::cout << "File openning error!" << std::endl;
+                    exit(1);
+                }
+                for (auto& str : data) chunk_file << str << "\n";
+                chunk_file.seekg(0);
+                chunk_file.clear();
+                files.push_back(std::move(chunk_file));
+                data.clear();
+            };
+
+            if(input_files.has_value()) {
+                for (auto& file : *input_files) {
+                    while (std::getline(*file, line)) {
+                        data.push_back(std::move(line));
+                        line.clear();
+                        if (data.size() == chunk_size) {
+                            sort_and_write_to_chunkfile();
+                        }
+                    }
+                    file->close();
+                }
+            }
+            else {
+                while (std::getline(std::cin, line)) {
+                    data.push_back(std::move(line));
+                    line.clear();
+                    if (data.size() == chunk_size) {
+                        sort_and_write_to_chunkfile();
+                    }
+                }
+            }
+
+            if (!data.empty()) {
+                sort_and_write_to_chunkfile();
+            }
+
+            auto neg_comparator = [&](const std::pair<std::string, int>& p1, const std::pair<std::string, int>& p2) {
+                return comparator(p1.first, p2.first);
+            };
+
+            std::priority_queue<std::pair<std::string, int>, std::vector<std::pair<std::string, int>>, decltype(neg_comparator)> pq(neg_comparator);
+            for (int i{}; i < files.size(); ++i) {
+                std::string line;
+                if (std::getline(files[i], line)) pq.push({std::move(line), i});
+            }
+
+
+
+            while (!pq.empty()) {
+                auto p = pq.top();
+                pq.pop();
+                output << p.first << '\n'; 
+
+                std::string line;
+                if (std::getline(files[p.second], line)) {
+                    pq.push({std::move(line), p.second});
+                }
+                else {
+                    files[p.second].close();
+                    std::string name("chunk_file");
+                    name += std::to_string(p.second) + ".txt";
+                    std::filesystem::remove(name);
+                }
+            }
+        }   
+
     public:
         GNU_coreutils_sort(int argc, const char *argv[]) {
             parse_arguments(argc, argv);
@@ -91,73 +199,38 @@ class GNU_coreutils_sort {
         void sort_clone() {
             std::vector<std::string> data;
             std::string line;
+            std::optional<std::vector<std::unique_ptr<std::ifstream>>> files{};
+
+            
             if (!in_filenames.empty()) {
+                files.emplace();
                 for (auto name : in_filenames) {
-                    std::ifstream file(name);
-                    if (!file.is_open()) {
+                    auto file = std::make_unique<std::ifstream>(name);
+                    if (!file->is_open()) {
                         std::cout << "No such file" << std::endl;
                         exit(1);
                     }
-                    while (std::getline(file, line)) {
-                        data.push_back(line);
-                    }
-                    file.close();
+                    files->push_back(std::move(file));
                 }
             }
-            else {
-                    while (std::getline(std::cin, line)) {
-                    data.push_back(line);
-                }
-            }
-
-            if (data.empty()) return;
-
-            if (numeric) {
-                std::sort(data.begin(), data.end(), [this](const std::string& str1, const std::string& str2){
-                    auto [num1, flag1] = parse_number(str1);
-                    auto [num2, flag2] = parse_number(str2);
-                    if (!flag1 && !flag2) return str1 < str2;
-                    if (flag1 != flag2) {
-                        if (flag1 && num1 == 0) return true;
-                        else if (flag2 && num2 == 0) return false;
-                        return num1 < num2;
-                    }
-                    if (num1 != num2) return num1 < num2;
-                    return str1 < str2;
-                });
-            }
-            else {
-                std::sort(data.begin(), data.end());
-            }
-
-            if (unique) {
-                auto it = std::unique(data.begin(), data.end());
-                data.erase(it, data.end());
-            }
-            if (reverse) {
-                std::reverse(data.begin(), data.end());
-            }
+            
             if (!out_filename.empty() && out_filename != "-") {
                 std::ofstream file(out_filename);
                 if (!file.is_open()) {
                     std::cout << "Output file openning error!" << std::endl;
                     exit(1);
-                }
-                for (auto& st : data) {
-                    file << st << std::endl;
-                }
+                }               
+                solution(files, file);
                 file.close();
             }
             else {
-                for (auto& st : data) {
-                    std::cout << st << std::endl;
-                }
+                solution(files, std::cout);
             }
         }
 };
-#endif
 
 int main(int argc, const char* argv[]) {
     GNU_coreutils_sort obj(argc, argv);
     obj.sort_clone();
 }
+#endif
