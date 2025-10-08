@@ -1,8 +1,0 @@
-banana
-apple
-cherry
-apple
-10
-2
-100
-banana`
